@@ -1,10 +1,22 @@
 # Reality Tear
 
-A browser-based interactive creative coding experiment by Michelle Guan.
+> Split and distort a live scene with your hands.
 
-## Live demo
+[**View live demo →**](https://michmich02.github.io/reality-tear/)
 
-https://michmich02.github.io/reality-tear/
+## Overview
+
+Reality Tear is a spatial interaction experiment where gestures appear to pull apart the camera image itself. The project focuses on dramatic feedback, depth, and the feeling of manipulating a digital surface directly.
+
+## Interaction
+
+- Allow camera access.
+- Keep your hands visible in good lighting.
+- Use the prompted gesture to open and control the tear.
+
+## Built with
+
+`JavaScript` · `Three.js` · `WebGL` · `MediaPipe`
 
 ## Run locally
 
@@ -12,14 +24,10 @@ https://michmich02.github.io/reality-tear/
 python3 -m http.server 8000
 ```
 
-Open http://localhost:8000. Camera access requires localhost or HTTPS. Use a desktop browser and good lighting; allow camera or microphone access when the experience asks for it. External models and CDN scripts require internet access.
+Open [http://localhost:8000](http://localhost:8000) in a desktop browser. Camera and microphone APIs require localhost or HTTPS; external models and CDN dependencies require an internet connection.
 
-## Files
+## Design notes
 
-The repository root contains the complete static project and all visual assets.
-
-## Publishing
-
-Enable GitHub Pages with **Deploy from a branch**, branch **main**, folder **/(root)**.
-
-Camera, microphone and gesture behavior should be verified on the target device.
+- Immediate visual feedback keeps the gesture-to-effect relationship legible.
+- The experience is designed as a focused, full-screen interaction.
+- Processing happens in the browser; camera and microphone streams are not uploaded by this project.

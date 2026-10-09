@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Reality Tear - 3 States</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <!-- Use specific versions for stability -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; touch-action: none; user-select: none; -webkit-user-select: none; }
+        body { background-color: #111; color: #eee; font-family: Impact, 'Arial Black', sans-serif; overflow: hidden; cursor: url('scraper_cursor.png') 0 0, auto; }
+        body.lighter-mode { cursor: url('lighter_cursor.png') 10 10, auto; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
+        
+        /* Grunge / Street Sign UI */
+        .street-sign { 
+            background: #fff; color: #000; padding: 10px 20px; 
+            margin: 20px; display: inline-block; transform: rotate(-2deg); 
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5); border: 2px solid #000; 
+        }
+        .street-sign h1 { font-size: 24px; text-transform: uppercase; margin-bottom: -5px; }
+        .street-sign p { font-size: 14px; font-weight: bold; background: #000; color: #fff; display: inline-block; padding: 2px 6px; }
+        
+        .caution-tape {
+            background: repeating-linear-gradient(45deg, #FFCC00, #FFCC00 20px, #000 20px, #000 40px);
+            color: #fff; text-align: center; font-size: 16px; font-weight: bold; padding: 10px;
+            width: 100%; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.8);
+        }
+        .caution-text { background: #000; color: #FFCC00; padding: 2px 10px; border-radius: 2px; }
+        
+        #error-log { position: absolute; bottom: 60px; left: 10px; color: #ff3333; font-size: 12px; pointer-events: none; background: #000; padding: 5px; display: none; }
+        
+        #loading { background: #111; pointer-events: all; transition: opacity 0.5s; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        
+        .cursor { position: absolute; width: 48px; height: 48px; transform: translate(0, 0); pointer-events: none; z-index: 20; opacity: 0; transition: opacity 0.2s, transform 0.1s; background-size: contain; background-repeat: no-repeat; background-image: url('scraper_cursor.png'); }
+        body.lighter-mode .cursor { background-image: url('lighter_cursor.png'); }
+        .cursor.active { transform: scale(0.8); filter: drop-shadow(0 0 10px rgba(255,255,255,0.8)); }
+        
+        .tool-selector {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; pointer-events: auto;
+            background: #222; padding: 10px; border: 3px solid #000; box-shadow: inset 0 0 10px #000, 4px 4px 0 rgba(0,0,0,0.5);
+        }
+        .tool-btn {
+            background: #444; border: 2px solid #222; color: #999;
+            padding: 10px 20px; font-family: Impact, 'Arial Black', sans-serif;
+            font-size: 20px; text-transform: uppercase; cursor: pointer;
+            transition: all 0.1s; border-radius: 2px; box-shadow: 0 4px 0 #111;
+        }
+        .tool-btn:active { transform: translateY(4px); box-shadow: 0 0 0 #111; }
+        .tool-btn.active { color: #fff; box-shadow: inset 0 2px 10px rgba(0,0,0,0.5); transform: translateY(2px); }
+        
+        .tool-btn.scraper.active { background: #555; border-color: #777; }
+        .tool-btn.lighter.active { background: #CC3300; border-color: #FF6600; text-shadow: 0 0 5px #FFCC00; }
+    </style>
+</head>
+<body>
+    <video id="webcam" playsinline muted autoplay style="display: none;"></video>
+    <div id="canvas-container"></div>
+    
+    <div id="cursor-left" class="cursor"></div>
+    <div id="cursor-right" class="cursor"></div>
+
+    <div id="ui-layer">
+        <div style="position: relative; width: 100%; height: 100%;">
+            <div class="street-sign">
+                <h1>STREET COLLAGE</h1>
+                <p>TEAR IT DOWN</p>
+            </div>
+            
+            <div class="tool-selector">
+                <button id="btn-scraper" class="tool-btn scraper active">⛏️ SCRAPER</button>
+                <button id="btn-lighter" class="tool-btn lighter">🔥 LIGHTER</button>
+            </div>
+
+            <div id="error-log"></div>
+        </div>
+    </div>
+
+    <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center z-50">
+        <div style="font-size: 40px; margin-bottom: 20px;">🚧</div>
+        <h1 class="text-4xl font-bold text-yellow-500 mb-2" style="text-shadow: 2px 2px 0 #000;">STREET COLLAGE</h1>
+        <p class="text-xl text-white font-bold bg-black px-4 py-1 mb-8" id="loading-text">PREPARING WALL...</p>
+        <button id="start-btn" class="hidden px-8 py-3 bg-yellow-500 text-black border-4 border-black font-bold text-2xl hover:bg-white transition-colors pointer-events-auto">ENTER STREET</button>
+    </div>
+
+<script src="textures.js"></script>
+<script>
+// --- CONFIGURATION ---
+const CONFIG = {
+    // Original Tearable-Cloth values, precisely scaled
+    // Original canvas: 560x350px, Our world: ~3.4 x 2 units
+    // Scale factor: 2/350 = 0.005714
+
+    cols: 80,           // Higher density for smooth tear edges
+    rows: 50,           // Higher density for smooth tear edges
+    accuracy: 3,        // Original: physics_accuracy = 3
+    gravity: 6.86,      // Original: 1200. Scaled: 1200 * (2/350) = 6.86
+    tearDist: 0.343,    // Original: 60px. Scaled: 60 * (2/350) = 0.343
+    influence: 0.114,   // Original: 20px. Scaled: 20 * (2/350) = 0.114
+    cut: 0.029,         // Original: 5px. Scaled: 5 * (2/350) = 0.029
+    delta: 0.016,       // Same as original
+    pinchThreshold: 0.1
+};
+
+// --- GLOBAL STATE ---
+const state = {
+    toolMode: 'SCRAPER', // 'SCRAPER' or 'LIGHTER'
+    width: window.innerWidth,
+    height: window.innerHeight,
+    aspect: window.innerWidth / window.innerHeight,
+    hands: [{x: 0, y: 0, pinching: false, active: false}, {x: 0, y: 0, pinching: false, active: false}],
+    layers: [],
+    activeLayerIndex: 0,
+    time: 0,
+    pointerFallback: { x: 0, y: 0, active: false },
+    maskCanvas: document.createElement('canvas'),
+    maskCtx: null,
+    maskTexture: null
+};
+state.maskCanvas.width = 640;
+state.maskCanvas.height = 480;
+state.maskCtx = state.maskCanvas.getContext('2d', {willReadFrequently: true});
+state.maskTexture = new THREE.CanvasTexture(state.maskCanvas);
+state.maskTexture.colorSpace = THREE.SRGBColorSpace;
+
+// --- THREE.JS SETUP ---
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-state.aspect, state.aspect, 1, -1, 0.1, 100);
+camera.position.set(0, 0, 5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(state.width, state.height);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+container.appendChild(renderer.domElement);
+
+// --- PHYSICS ENGINE ---
+// Line-by-line faithful port of https://github.com/dissimulate/Tearable-Cloth
+
+class Point {
+    constructor(x, y, z, u, v) {
+        this.x = x; this.y = y; this.z = z;
+        this.px = x; this.py = y; this.pz = z;
+        this.vx = 0; this.vy = 0; this.vz = 0;
+        this.u = u; this.v = v;
+        this.pinX = null; this.pinY = null; this.pinZ = null;
+        this.constraints = [];
+        this.burnAmount = 0.0; // 0.0 = normal, 1.0 = destroyed
+        this.vz = 0;
+    }
+
+    addForce(fx, fy, fz) {
+        this.vx += fx;
+        this.vy += fy;
+        this.vz += fz;
+    }
+
+    update(delta) {
+        // Fire Spread Logic runs even for pinned points!
+        if (this.burnAmount > 0.0 && this.burnAmount < 1.0) {
+            this.burnAmount += delta * 1.5; // Burn gets stronger over time
+            if (this.burnAmount >= 1.0) {
+                this.burnAmount = 1.0;
+                this.unpin();
+                this.constraints = []; // Destroy completely
+            }
+        }
+        // Spread to neighbors through constraints (only if actively burning, not if already ash)
+        if (this.burnAmount > 0.4 && this.burnAmount < 1.0) {
+            this.constraints.forEach(c => {
+                if (c.p1.burnAmount === 0.0) { c.p1.burnAmount = 0.01; c.p1.unpin(); }
+                if (c.p2.burnAmount === 0.0) { c.p2.burnAmount = 0.01; c.p2.unpin(); }
+            });
+        }
+
+        if (this.pinX !== null) return this;
+
+        // Add gravity
+        this.addForce(0, -CONFIG.gravity, 0);
+
+        // Verlet integration (exact copy of original)
+        delta *= delta;
+        let nx = this.x + ((this.x - this.px) * 0.99) + ((this.vx / 2) * delta);
+        let ny = this.y + ((this.y - this.py) * 0.99) + ((this.vy / 2) * delta);
+        let nz = this.z + ((this.z - this.pz) * 0.99) + ((this.vz / 2) * delta);
+
+        if (isNaN(nx)) nx = this.x;
+        if (isNaN(ny)) ny = this.y;
+        if (isNaN(nz)) nz = this.z;
+
+        this.px = this.x;
+        this.py = this.y;
+        this.pz = this.z;
+
+        this.x = nx;
+        this.y = ny;
+        this.z = nz;
+
+        this.vy = this.vx = this.vz = 0;
+
+        return this;
+    }
+
+    resolve() {
+        if (this.pinX !== null) {
+            this.x = this.pinX;
+            this.y = this.pinY;
+            this.z = this.pinZ;
+            return;
+        }
+
+        let i = this.constraints.length;
+        while (i--) this.constraints[i].resolve();
+
+        // Bounds (original style: reflect off edges)
+        if (this.y < -3) { this.y = 2 * (-3) - this.y; }
+        if (this.y > 3) { this.y = 2 * 3 - this.y; }
+    }
+
+    attach(point) {
+        this.constraints.push(new Constraint(this, point));
+    }
+
+    free(constraint) {
+        this.constraints.splice(this.constraints.indexOf(constraint), 1);
+    }
+
+    addForce(x, y, z) {
+        this.vx += x; this.vy += y; this.vz += z;
+        // Rounding trick from original to prevent float drift
+        let round = 400;
+        this.vx = ~~(this.vx * round) / round;
+        this.vy = ~~(this.vy * round) / round;
+        this.vz = ~~(this.vz * round) / round;
+    }
+
+    pin(x, y, z) { this.pinX = x; this.pinY = y; this.pinZ = z; }
+    unpin() { this.pinX = null; this.pinY = null; this.pinZ = null; }
+}
+
+class Constraint {
+    constructor(p1, p2) {
+        this.p1 = p1;
+        this.p2 = p2;
+        this.length = Math.hypot(p1.x - p2.x, p1.y - p2.y, p1.z - p2.z);
+    }
+
+    resolve() {
+        let dx = this.p1.x - this.p2.x;
+        let dy = this.p1.y - this.p2.y;
+        let dz = this.p1.z - this.p2.z;
+        let dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        
+        // Protect against divide-by-zero NaN poisoning
+        if (dist < 0.000001 || isNaN(dist)) return;
+
+        let diff = (this.length - dist) / dist;
+
+        // Tear if stretched too far (original: if (dist > tear_distance))
+        if (dist > CONFIG.tearDist) {
+            this.p1.free(this);
+            return;
+        }
+
+        // Original formula: px = diff_x * diff * 0.5 (NO extra factor!)
+        let px = dx * diff * 0.5;
+        let py = dy * diff * 0.5;
+        let pz = dz * diff * 0.5;
+
+        // Original moves ALL points, even pinned (pin resets in resolve_constraints)
+        this.p1.x += px; this.p1.y += py; this.p1.z += pz;
+        this.p2.x -= px; this.p2.y -= py; this.p2.z -= pz;
+    }
+}
+
+// Triangle tracks 3 points for WebGL rendering. Deactivates when vertices drift too far apart.
+class Triangle {
+    constructor(a, b, c, idxA, idxB, idxC) {
+        this.a = a; this.b = b; this.c = c;
+        this.idxA = idxA; this.idxB = idxB; this.idxC = idxC;
+        this.active = true;
+        // Store original edge lengths to detect tearing
+        this.restAB = Math.hypot(a.x - b.x, a.y - b.y);
+        this.restBC = Math.hypot(b.x - c.x, b.y - c.y);
+        this.restCA = Math.hypot(c.x - a.x, c.y - a.y);
+    }
+    check() {
+        if (!this.active) return false;
+        // Deactivate if any edge has stretched beyond tear threshold
+        const dAB = Math.hypot(this.a.x - this.b.x, this.a.y - this.b.y);
+        const dBC = Math.hypot(this.b.x - this.c.x, this.b.y - this.c.y);
+        const dCA = Math.hypot(this.c.x - this.a.x, this.c.y - this.a.y);
+        if (dAB > this.restAB * 8 || dBC > this.restBC * 8 || dCA > this.restCA * 8) {
+            this.active = false;
+            return true;
+        }
+        return false;
+    }
+}
+
+class ClothLayer {
+    // bounds = { x, y, w, h, rot } in world coords (x,y = top-left corner, rot = degrees)
+    constructor(texture, zOffset, layout = {x: -1, y: 1, w: 2, h: 2, rot: 0, opacity: 1.0}) {
+        this.zOffset = zOffset;
+        this.layout = layout;
+        this.opacity = layout.opacity !== undefined ? layout.opacity : 1.0;
+        this.points = [];
+        this.triangles = [];
+
+        const bx = layout.x;
+        const by = layout.y;
+        const bw = layout.w;
+        const bh = layout.h;
+        const rot = layout.rot * Math.PI / 180;
+
+        // Center of the poster (for rotation pivot)
+        const cx = bx + bw / 2;
+        const cy = by - bh / 2;
+
+        this.cols = Math.round(CONFIG.cols * (bw / (state.aspect * 2)));
+        // Maintain square grid cells: rows based on same scale as cols
+        this.rows = Math.round(CONFIG.cols * (bh / (state.aspect * 2)));
+        this.cols = Math.max(this.cols, 10);
+        this.rows = Math.max(this.rows, 10);
+
+        // Create Points
+        for (let y = 0; y <= this.rows; y++) {
+            for (let x = 0; x <= this.cols; x++) {
+                let px = bx + (x / this.cols) * bw;
+                let py = by - (y / this.rows) * bh;
+
+                // Apply rotation around center
+                if (rot !== 0) {
+                    const dx = px - cx;
+                    const dy = py - cy;
+                    px = cx + dx * Math.cos(rot) - dy * Math.sin(rot);
+                    py = cy + dx * Math.sin(rot) + dy * Math.cos(rot);
+                }
+
+                const u = x / this.cols;
+                const v = 1 - (y / this.rows);
+                // Map to Flat Wall
+                const pt = new Point(px, py, zOffset, u, v);
+                pt.pin(px, py, zOffset);
+
+                if (x !== 0) pt.attach(this.points[this.points.length - 1]);
+                if (y !== 0) pt.attach(this.points[x + (y - 1) * (this.cols + 1)]);
+
+                this.points.push(pt);
+            }
+        }
+
+        // Create Triangles for WebGL rendering
+        for (let y = 0; y < this.rows; y++) {
+            for (let x = 0; x < this.cols; x++) {
+                const idx = (gx, gy) => gy * (this.cols + 1) + gx;
+                const tl = idx(x, y), tr = idx(x+1, y), bl = idx(x, y+1), br = idx(x+1, y+1);
+                this.triangles.push(new Triangle(this.points[tl], this.points[bl], this.points[br], tl, bl, br));
+                this.triangles.push(new Triangle(this.points[tl], this.points[br], this.points[tr], tl, br, tr));
+            }
+        }
+        this.initialTriangles = this.triangles.length;
+
+        // Three.js Geometry
+        this.geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(this.points.length * 3);
+        const uvs = new Float32Array(this.points.length * 2);
+        const burns = new Float32Array(this.points.length);
+
+        this.points.forEach((p, i) => {
+            positions[i * 3] = p.x; positions[i * 3 + 1] = p.y; positions[i * 3 + 2] = p.z;
+            uvs[i * 2] = p.u; uvs[i * 2 + 1] = p.v;
+            burns[i] = p.burnAmount;
+        });
+
+        this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        this.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+        this.geometry.setAttribute('burn', new THREE.BufferAttribute(burns, 1));
+        this.updateIndices();
+
+        // Material
+        this.material = new THREE.ShaderMaterial({
+            uniforms: {
+                tDiffuse: { value: texture },
+                maskTex: { value: state.maskTexture },
+                burnEdgeColor: { value: new THREE.Color(0xff4400) },
+                burnInnerColor: { value: new THREE.Color(0x000000) },
+                baseOpacity: { value: this.opacity }
+            },
+            side: THREE.DoubleSide,
+            transparent: true,
+            extensions: { derivatives: true },
+            vertexShader: `
+                attribute float burn;
+                varying vec2 vUv;
+                varying vec3 vPos;
+                varying float vBurn;
+                void main() {
+                    vUv = uv;
+                    vBurn = burn;
+                    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+                    vPos = mvPos.xyz;
+                    gl_Position = projectionMatrix * mvPos;
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform sampler2D maskTex;
+                uniform vec3 burnEdgeColor;
+                uniform vec3 burnInnerColor;
+                uniform float baseOpacity;
+                varying vec2 vUv;
+                varying vec3 vPos;
+                varying float vBurn;
+
+                void main() {
+                    vec4 texColor = texture2D(tDiffuse, vUv);
+                    
+                    float isBurned = step(0.99, vBurn); 
+                    
+                    // Fire colors at the edge of the burn
+                    float edgeBurn = smoothstep(0.4, 0.9, vBurn);
+                    float innerBurn = smoothstep(0.7, 1.0, vBurn);
+                    
+                    vec3 finalColor = mix(texColor.rgb, burnEdgeColor, edgeBurn);
+                    finalColor = mix(finalColor, burnInnerColor, innerBurn);
+                    
+                    // Lighting
+                    vec3 dX = dFdx(vPos);
+                    vec3 dY = dFdy(vPos);
+                    vec3 normal = normalize(cross(dX, dY));
+                    if (!gl_FrontFacing) normal = -normal;
+                    vec3 lightDir = normalize(vec3(0.5, 0.8, 1.0));
+                    float diff = max(dot(normal, lightDir), 0.0);
+                    vec3 shadedColor = texColor.rgb * (diff * 0.4 + 0.6);
+                    float depthShadow = smoothstep(0.0, 2.0, vPos.z) * 0.2;
+                    shadedColor -= depthShadow;
+
+                    if (vBurn > 0.0) {
+                        float ashEdge = smoothstep(0.05, 0.3, vBurn);
+                        float fireEdge = smoothstep(0.3, 0.6, vBurn);
+                        float alpha = 1.0 - smoothstep(0.6, 0.95, vBurn);
+                        
+                        shadedColor = mix(shadedColor, vec3(0.05), ashEdge); // Turn to ash/black
+                        vec3 fireColor = vec3(1.0, 0.4, 0.0) * 2.0; // Bright orange fire
+                        shadedColor = mix(shadedColor, fireColor, fireEdge); // Add glow
+                        
+                        gl_FragColor = vec4(shadedColor, alpha * baseOpacity);
+                    } else {
+                        gl_FragColor = vec4(shadedColor, baseOpacity);
+                    }
+                }
+            `
+        });
+        this.mesh = new THREE.Mesh(this.geometry, this.material);
+        scene.add(this.mesh);
+    }
+
+    updateIndices() {
+        const indices = [];
+        for (let i = 0; i < this.triangles.length; i++) {
+            if (this.triangles[i].active) {
+                indices.push(this.triangles[i].idxA, this.triangles[i].idxB, this.triangles[i].idxC);
+            }
+        }
+        this.geometry.setIndex(indices);
+    }
+
+    updatePhysics(hands, layerIndex) {
+        const w = state.aspect * 2;
+        let interactionHandled = false;
+
+        // --- STEP 1: Resolve constraints FIRST (Tearable-Cloth order) ---
+        // Original: while (i--) { var p = this.points.length; while (p--) this.points[p].resolve_constraints(); }
+        let iter = CONFIG.accuracy;
+        while (iter--) {
+            let p = this.points.length;
+            while (p--) this.points[p].resolve();
+        }
+
+        // --- STEP 2: Interaction + Update ---
+        let activeHand = null;
+        let intersectPt = null;
+        let moveDelta3D = null;
+
+        // Skip interactions entirely if this layer is marked as indestructible (e.g. the brick wall)
+        if (this.layout.indestructible) return false;
+
+        hands.forEach(hand => {
+            if (!hand.active || !hand.pinching) {
+                return;
+            }
+
+            const mouse = new THREE.Vector2((hand.x - 0.5) * 2, -(hand.y - 0.5) * 2);
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            let hitPoint = null;
+            const intersects = raycaster.intersectObject(this.mesh);
+            if (intersects.length > 0) hitPoint = intersects[0].point;
+
+            if (hitPoint) {
+                interactionHandled = true;
+                activeHand = hand;
+                intersectPt = hitPoint;
+
+                // Calculate 3D movement delta
+                const prevMouse = new THREE.Vector2(
+                    hand._prevX !== undefined ? (hand._prevX - 0.5) * 2 : mouse.x,
+                    hand._prevY !== undefined ? -(hand._prevY - 0.5) * 2 : mouse.y
+                );
+                
+                // Unproject current and prev mouse to a plane at the hit depth to get world space delta
+                const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), hitPoint);
+                const rayPrev = new THREE.Raycaster();
+                rayPrev.setFromCamera(prevMouse, camera);
+                const ptCurr = new THREE.Vector3();
+                const ptPrev = new THREE.Vector3();
+                raycaster.ray.intersectPlane(plane, ptCurr);
+                rayPrev.ray.intersectPlane(plane, ptPrev);
+                
+                if (ptCurr && ptPrev) {
+                    moveDelta3D = ptCurr.clone().sub(ptPrev);
+                } else {
+                    moveDelta3D = new THREE.Vector3(0,0,0);
+                }
+            }
+        });
+
+        // --- STEP 3: Update each point (interaction + gravity + Verlet) ---
+        let pi = this.points.length;
+        while (pi--) {
+            const p = this.points[pi];
+            if (activeHand && intersectPt && moveDelta3D) {
+                let dx = p.x - intersectPt.x;
+                let dy = p.y - intersectPt.y;
+                let dz = p.z - intersectPt.z;
+                let dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (dist < CONFIG.influence) {
+                    if (state.toolMode === 'SCRAPER') {
+                        p.unpin();
+                        // Inject 3D velocity
+                        p.px = p.x - moveDelta3D.x * 1.8;
+                        p.py = p.y - moveDelta3D.y * 1.8;
+                        p.pz = p.z - moveDelta3D.z * 1.8;
+                    } else {
+                        // Lighter mode: ignite!
+                        p.burnAmount = Math.max(p.burnAmount, 0.05);
+                        p.unpin();
+                    }
+                } else if (dist < CONFIG.cut) {
+                    p.unpin();
+                    p.constraints = [];
+                }
+            }
+
+            p.update(CONFIG.delta);
+        }
+
+        // --- UPDATE THREE.JS GEOMETRY ---
+        const positions = this.geometry.attributes.position.array;
+        const burns = this.geometry.attributes.burn.array;
+        this.points.forEach((p, idx) => {
+            positions[idx * 3] = p.x;
+            positions[idx * 3 + 1] = p.y;
+            positions[idx * 3 + 2] = p.z;
+            burns[idx] = p.burnAmount;
+        });
+        this.geometry.attributes.position.needsUpdate = true;
+        this.geometry.attributes.burn.needsUpdate = true;
+
+        // Deactivate triangles whose vertices have drifted too far
+        let needsIndexUpdate = false;
+        this.triangles.forEach(t => {
+            if (t.check()) needsIndexUpdate = true;
+        });
+        if (needsIndexUpdate) this.updateIndices();
+
+        return interactionHandled;
+    }
+}
+
+
+// --- INITIALIZATION ---
+async function initTextures() {
+    const video = document.getElementById('webcam');
+    const videoTex = new THREE.VideoTexture(video);
+    videoTex.colorSpace = THREE.SRGBColorSpace;
+    videoTex.wrapS = THREE.RepeatWrapping;
+    videoTex.repeat.x = -1; // Mirror webcam
+
+    const textureLoader = new THREE.TextureLoader();
+    const createTex = async (base64Str, name) => {
+        return new Promise((res, rej) => {
+            textureLoader.load(base64Str, tex => {
+                tex.colorSpace = THREE.SRGBColorSpace;
+                console.log('Loaded texture:', name);
+                res(tex);
+            }, undefined, (err) => {
+                console.error('Failed to load texture:', name, err);
+                // Create fallback colored texture
+                const c = document.createElement('canvas');
+                c.width = 64; c.height = 64;
+                const ctx = c.getContext('2d');
+                ctx.fillStyle = '#ff00ff';
+                ctx.fillRect(0, 0, 64, 64);
+                res(new THREE.CanvasTexture(c));
+            });
+        });
+    };
+    
+    console.log('Loading textures...');
+    const poster1Tex = await createTex(b64_poster1, 'poster1');
+    const poster2Tex = await createTex(b64_poster2, 'poster2');
+    const poster3Tex = await createTex(b64_poster3, 'poster3');
+    const poster4Tex = await createTex(b64_poster4, 'poster4');
+    const poster5Tex = await createTex(b64_poster5, 'poster5');
+    const poster6Tex = await createTex(b64_poster6, 'poster6');
+    const poster7Tex = await createTex(b64_poster7, 'poster7');
+    const poster8Tex = await createTex(b64_poster8, 'poster8');
+    const poster9Tex = await createTex(b64_poster9, 'poster9');
+    const poster10Tex = await createTex(b64_poster10, 'poster10');
+    const poster11Tex = await createTex(b64_poster11, 'poster11');
+    const poster12Tex = await createTex(b64_poster12, 'poster12');
+    const ductTapeTex = await createTex(b64_ductTape, 'ductTape');
+    ductTapeTex.wrapS = THREE.RepeatWrapping;
+    ductTapeTex.wrapT = THREE.RepeatWrapping;
+    ductTapeTex.repeat.set(4, 1);
+    const wallTex = await createTex(b64_wall, 'wall');
+    wallTex.wrapS = THREE.RepeatWrapping;
+    wallTex.wrapT = THREE.RepeatWrapping;
+    wallTex.repeat.set(3, 1.5); // Tile the brick texture
+
+    console.log('Creating layers...');
+
+    // Layer 0: Wall background (Make it extra large so it doesn't break on window resize)
+    state.layers.push(new ClothLayer(wallTex, -0.5, {
+        x: -4.0, y: 2.0, w: 8.0, h: 4.0, indestructible: true
+    }));
+
+    // Mood board scattered across the flat wall
+    state.layers.push(new ClothLayer(poster5Tex, 0.01, {   // 🍔 Burger Ad 
+        x: -1.5, y: 0.85, w: 1.2, h: 1.0, rot: -5
+    }));
+    state.layers.push(new ClothLayer(poster8Tex, 0.02, {   // 🎨 Matisse
+        x: 1.0, y: 0.9, w: 1.1, h: 0.9, rot: 4
+    }));
+    state.layers.push(new ClothLayer(poster3Tex, 0.03, {   // ☕ Café 
+        x: -1.0, y: 0.25, w: 1.3, h: 1.0, rot: 3
+    }));
+    state.layers.push(new ClothLayer(poster6Tex, 0.04, {   // 🪩 Cyber Rave Ad
+        x: -0.3, y: 0.75, w: 1.0, h: 0.8, rot: -7
+    }));
+    state.layers.push(new ClothLayer(poster4Tex, 0.05, {   // ✨ DREAM BIG
+        x: 0.1, y: 0.15, w: 1.2, h: 1.0, rot: 6
+    }));
+    state.layers.push(new ClothLayer(poster7Tex, 0.06, {   // 🎸 Concert
+        x: 0.9, y: -0.1, w: 1.3, h: 1.1, rot: -3
+    }));
+    state.layers.push(new ClothLayer(poster1Tex, 0.07, {   // 🎨 Graffiti 1
+        x: -0.8, y: -0.6, w: 1.1, h: 0.9, rot: -4
+    }));
+    state.layers.push(new ClothLayer(poster2Tex, 0.08, {   // 🎨 Graffiti 2
+        x: 0.1, y: -0.7, w: 1.2, h: 0.9, rot: 5
+    }));
+    
+    // NEW POSTERS (filling the gaps and overlapping)
+    state.layers.push(new ClothLayer(poster9Tex, 0.09, {   // 🔴 SALE 50%
+        x: -0.5, y: 0.9, w: 1.0, h: 1.2, rot: 2
+    }));
+    state.layers.push(new ClothLayer(poster10Tex, 0.091, { // 👽 Sci-Fi Movie
+        x: 0.5, y: 0.8, w: 1.1, h: 1.3, rot: -6
+    }));
+    state.layers.push(new ClothLayer(poster11Tex, 0.092, { // ⚪ White Fashion Ad
+        x: -1.3, y: -0.2, w: 1.2, h: 1.4, rot: 4
+    }));
+    state.layers.push(new ClothLayer(poster12Tex, 0.093, { // ⚪ White Hiring Ad
+        x: 0.6, y: -0.3, w: 0.9, h: 1.1, rot: 8
+    }));
+
+    // 🩹 Masking Tape Strips (Semi-transparent, beige) placed on corners and edges
+    const tapeOpacity = 0.85;
+    state.layers.push(new ClothLayer(ductTapeTex, 0.1, { x: -1.6, y: 0.9, w: 0.4, h: 0.1, rot: 45, opacity: tapeOpacity })); // Burger Ad TL
+    state.layers.push(new ClothLayer(ductTapeTex, 0.11, { x: -0.4, y: 0.9, w: 0.35, h: 0.08, rot: -40, opacity: tapeOpacity })); // Burger Ad TR
+    state.layers.push(new ClothLayer(ductTapeTex, 0.12, { x: 1.9, y: 0.95, w: 0.4, h: 0.1, rot: 30, opacity: tapeOpacity })); // Matisse TR
+    state.layers.push(new ClothLayer(ductTapeTex, 0.13, { x: -1.1, y: -0.7, w: 0.3, h: 0.08, rot: 60, opacity: tapeOpacity })); // Cafe BL
+    state.layers.push(new ClothLayer(ductTapeTex, 0.14, { x: 0.1, y: 0.78, w: 0.5, h: 0.1, rot: 5, opacity: tapeOpacity })); // Cyber Rave Top Edge
+    state.layers.push(new ClothLayer(ductTapeTex, 0.15, { x: 1.2, y: -0.8, w: 0.4, h: 0.09, rot: -45, opacity: tapeOpacity })); // Dream Big BR
+    state.layers.push(new ClothLayer(ductTapeTex, 0.16, { x: 1.4, y: -1.15, w: 0.6, h: 0.1, rot: -5, opacity: tapeOpacity })); // Concert Bottom Edge
+    state.layers.push(new ClothLayer(ductTapeTex, 0.17, { x: 0.5, y: -0.25, w: 0.35, h: 0.08, rot: 50, opacity: tapeOpacity })); // Missing Cat TL
+
+
+
+    // 📹 Webcam - huge, front-and-center, and on top of EVERYTHING, positioned at top right
+    state.layers.push(new ClothLayer(videoTex, 0.3, { // Highest zOffset
+        x: 0.5, y: 0.8, w: 1.2, h: 0.9, rot: 5
+    }));
+
+    console.log('All layers created:', state.layers.length);
+    state.activeLayerIndex = state.layers.length - 1;
+}
+
+async function initCamera() {
+    const video = document.getElementById('webcam');
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } 
+        });
+        video.srcObject = stream;
+        await new Promise(resolve => video.onloadedmetadata = resolve);
+        video.play();
+        return video;
+    } catch (e) {
+        document.getElementById('loading-text').innerText = "Camera access denied. Using mouse/touch mode.";
+        console.warn("Camera failed:", e);
+        return null;
+    }
+}
+
+async function initAI(videoElement) {
+    if (!videoElement) return;
+    
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`});
+    hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults((results) => {
+        const statusEl = document.getElementById('tracking-status');
+        if (statusEl) statusEl.innerText = results.multiHandLandmarks.length > 0 ? 'ACTIVE' : 'SEARCHING';
+        
+        // Reset hand states
+        state.hands[0].active = false;
+        state.hands[1].active = false;
+
+        if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                if (index > 1) return;
+                
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+                
+                const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y, indexTip.z - thumbTip.z);
+                
+                state.hands[index]._prevX = state.hands[index].x;
+                state.hands[index]._prevY = state.hands[index].y;
+                state.hands[index].x = 1 - ((indexTip.x + thumbTip.x) / 2);
+                state.hands[index].y = (indexTip.y + thumbTip.y) / 2;
+                state.hands[index].pinching = dist < CONFIG.pinchThreshold;
+                state.hands[index].active = true;
+            });
+        }
+    });
+
+    const segmentation = new SelfieSegmentation({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`});
+    segmentation.setOptions({ modelSelection: 1 });
+    segmentation.onResults((results) => {
+        state.maskCtx.save();
+        state.maskCtx.clearRect(0, 0, 640, 480);
+        state.maskCtx.drawImage(results.segmentationMask, 0, 0, 640, 480);
+        state.maskCtx.restore();
+        state.maskTexture.needsUpdate = true;
+    });
+
+    let lastVideoTime = -1;
+    async function processVideo() {
+        if (videoElement && !videoElement.paused && !videoElement.ended) {
+            if (videoElement.currentTime !== lastVideoTime) {
+                lastVideoTime = videoElement.currentTime;
+                try {
+                    await hands.send({image: videoElement}); 
+                    await segmentation.send({image: videoElement});
+                } catch(e) {
+                    console.error("AI processing error:", e);
+                }
+            }
+        }
+        requestAnimationFrame(processVideo);
+    }
+    processVideo();
+}
+
+// --- INPUT HANDLING (Fallback) ---
+function handlePointer(e, isDown) {
+    e.preventDefault();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    
+    state.pointerFallback._prevX = state.pointerFallback.x;
+    state.pointerFallback._prevY = state.pointerFallback.y;
+    state.pointerFallback.x = clientX / state.width;
+    state.pointerFallback.y = clientY / state.height;
+    state.pointerFallback.active = isDown;
+    state.pointerFallback.pinching = isDown;
+}
+
+window.addEventListener('mousedown', e => handlePointer(e, true), {passive: false});
+window.addEventListener('mousemove', e => { if(state.pointerFallback.active) handlePointer(e, true); }, {passive: false});
+window.addEventListener('mouseup', e => handlePointer(e, false));
+window.addEventListener('touchstart', e => handlePointer(e, true), {passive: false});
+window.addEventListener('touchmove', e => handlePointer(e, true), {passive: false});
+window.addEventListener('touchend', e => handlePointer(e, false));
+
+// Tool toggle buttons
+function setTool(mode) {
+    state.toolMode = mode;
+    const btnScraper = document.getElementById('btn-scraper');
+    const btnLighter = document.getElementById('btn-lighter');
+    
+    if (mode === 'LIGHTER') {
+        document.body.classList.add('lighter-mode');
+        btnLighter.classList.add('active');
+        btnScraper.classList.remove('active');
+    } else {
+        document.body.classList.remove('lighter-mode');
+        btnScraper.classList.add('active');
+        btnLighter.classList.remove('active');
+    }
+}
+
+document.getElementById('btn-scraper').addEventListener('click', () => setTool('SCRAPER'));
+document.getElementById('btn-lighter').addEventListener('click', () => setTool('LIGHTER'));
+
+window.addEventListener('resize', () => {
+    state.width = window.innerWidth;
+    state.height = window.innerHeight;
+    state.aspect = state.width / state.height;
+    camera.left = -state.aspect; camera.right = state.aspect;
+    camera.updateProjectionMatrix();
+    renderer.setSize(state.width, state.height);
+});
+
+// --- MAIN LOOP ---
+function animate() {
+    requestAnimationFrame(animate);
+    
+    const time = performance.now() * 0.001;
+    // Removed camera rotation for flat wall
+
+    const activeInputs = [];
+    state.hands.forEach(h => { 
+        if(h.active) {
+            activeInputs.push(h); 
+        }
+    });
+    if (state.pointerFallback.active) {
+        activeInputs.push(state.pointerFallback);
+    }
+
+    // Update UI Cursors
+    const cLeft = document.getElementById('cursor-left');
+    const cRight = document.getElementById('cursor-right');
+    
+    if (activeInputs[0]) {
+        cLeft.style.opacity = 1;
+        cLeft.style.left = `${activeInputs[0].x * 100}vw`;
+        cLeft.style.top = `${activeInputs[0].y * 100}vh`;
+        if(activeInputs[0].pinching) cLeft.classList.add('active'); else cLeft.classList.remove('active');
+    } else { cLeft.style.opacity = 0; }
+    
+    if (activeInputs[1]) {
+        cRight.style.opacity = 1;
+        cRight.style.left = `${activeInputs[1].x * 100}vw`;
+        cRight.style.top = `${activeInputs[1].y * 100}vh`;
+        if(activeInputs[1].pinching) cRight.classList.add('active'); else cRight.classList.remove('active');
+    } else { cRight.style.opacity = 0; }
+
+    // Physics & Logic
+    let remainingInputs = [...activeInputs];
+    
+    // Process from Top layer (index 3) to Bottom layer (index 0)
+    for (let i = state.layers.length - 1; i >= 0; i--) {
+        const layer = state.layers[i];
+        
+        // Pass inputs to the layer. It returns true if it absorbed the input (hit solid paper)
+        // Pass index so layer can track which hand is locked to it
+        const handled = layer.updatePhysics(remainingInputs, i);
+        
+        // If this layer absorbed the pinch, we used to block lower layers here.
+        // Now we let the inputs pierce through so you can tear multiple layers at once!
+        if (handled) {
+            // remainingInputs = []; // Disabled for piercing effect
+        }
+    }
+
+    renderer.render(scene, camera);
+}
+
+// --- BOOTSTRAP ---
+async function start() {
+    const log = (m) => { document.getElementById('loading-text').innerText = m; console.log(m); };
+    const err = (m) => { document.getElementById('error-log').innerText = m; };
+    
+    log("Requesting camera...");
+    const video = await initCamera().catch(e => { err("Camera failed: " + e.message); return null; });
+    
+    log("Loading neural pathways...");
+    if (video) await initAI(video).catch(e => err("AI failed: " + e.message));
+    
+    log("Constructing reality planes...");
+    await initTextures().catch(e => err("Textures failed: " + e.message));
+    
+    const startBtn = document.getElementById('start-btn');
+    const spinner = document.querySelector('.spinner');
+    if (spinner) spinner.style.display = 'none';
+    document.getElementById('loading-text').innerText = "SYSTEM READY";
+    
+    // Auto start without clicking
+    document.getElementById('loading').style.opacity = 0;
+    setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
+    animate();
+}
+
+start();
+
+</script>
+</body>
+</html>
